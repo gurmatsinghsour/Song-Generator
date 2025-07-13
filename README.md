@@ -72,7 +72,7 @@ The goal is to create an end-to-end pipeline: a user provides a high-level creat
 1. Install the core dependencies:
 
    ```bash
-   pip install tensorflow google-generativeai audiocraft
+   pip install -r requirements.txt
    ```
 
 2. Ensure your trained model files reside in the `Models/` folder and the tokenizer is available in `Tokenizer/tokenizer.pkl`.
@@ -83,19 +83,27 @@ The goal is to create an end-to-end pipeline: a user provides a high-level creat
    export GEMINI_API_KEY=<YOUR_KEY>
    ```
 
-4. Run the generator script and follow the prompts (CLI option):
-
-   ```bash
-   python generate_song.py
-   ```
-
-5. Or start the FastAPI server:
+4. Start the FastAPI server:
 
    ```bash
    uvicorn app:app --reload
    ```
 
-Use the `/generate` endpoint to retrieve lyrics from both models and `/song` to create an `.mp3` from your chosen lyrics.
+Use the `/generate` endpoint to retrieve lyrics from both models and then pass your preferred lyrics back to `/song` to create an `.mp3` file.
+
+Example request/response sequence:
+
+```bash
+curl -X POST -H "Content-Type: application/json" \
+    -d '{"text": "I love the way you", "max_words": 30}' \
+    http://localhost:8000/generate
+
+# choose either the "local" or "gemini" lyrics from the response
+
+curl -X POST -H "Content-Type: application/json" \
+    -d '{"lyrics": "<your chosen lyrics>"}' \
+    http://localhost:8000/song --output song.mp3
+```
 
 ---
 

@@ -46,14 +46,17 @@ def load_latest_model(directory: str = MODELS_DIR):
 
 
 def generate_song_line(seed_text: str, tokenizer, model, next_words: int = 50) -> str:
-    """Generate lyrics using the notebook-style loop provided by the user."""
+    """Generate lyrics using the notebook-style loop provided by the user.
+
+    Stops early if the model predicts an unknown token (``<OOV>``).
+    """
     max_seq_len = model.input_shape[1] + 1
     for _ in range(next_words):
         token_list = tokenizer.texts_to_sequences([seed_text])[0]
         token_list = pad_sequences([token_list], maxlen=max_seq_len - 1, padding="pre")
         predicted = model.predict(token_list, verbose=0)
         output_word = tokenizer.index_word.get(int(np.argmax(predicted)))
-        if not output_word:
+        if not output_word or output_word == "<OOV>":
             break
         seed_text += " " + output_word
     return seed_text
@@ -86,33 +89,3 @@ def create_song_from_lyrics(lyrics: str, output_path: str = DEFAULT_OUTPUT, mode
     return output_path
 
 
-def main():
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("Warning: GEMINI_API_KEY environment variable not set. Gemini lyrics will fail without it.")
-
-    prompt = input("Enter a song description: ")
-
-    tokenizer = load_tokenizer()
-    model = load_latest_model()
-
-    local_lyrics = generate_with_local_model(prompt, tokenizer, model)
-    gemini_lyrics = generate_with_gemini(prompt, api_key) if api_key and genai else "[Gemini not available]"
-
-    print("\n--- Local Model Lyrics ---\n")
-    print(local_lyrics)
-    print("\n--- Gemini Lyrics ---\n")
-    print(gemini_lyrics)
-
-    choice = input("Choose lyrics to turn into music (1=Local, 2=Gemini): ").strip()
-    selected = local_lyrics if choice != "2" else gemini_lyrics
-
-    try:
-        path = create_song_from_lyrics(selected)
-        print(f"Saved generated song to {path}")
-    except Exception as e:
-        print(f"Music generation failed: {e}")
-
-
-if __name__ == "__main__":
-    main()
