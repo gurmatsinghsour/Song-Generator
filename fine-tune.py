@@ -11,12 +11,15 @@ import langdetect
 models_path = "Models/"
 all_files = os.listdir(models_path)
 file_names = [f for f in all_files if f.endswith('.h5')]
-files_names = file_names.sort(key=lambda x: int(x.split('_v')[1].split('.')[0]))
+file_names.sort(key=lambda x: int(x.split('_v')[1].split('.')[0]))
 latest_model = file_names[-1] if file_names else None
 print(f"Latest model: {latest_model}")
 
+if latest_model is None:
+    raise FileNotFoundError("No model files found in Models/ directory.")
+
 # Ensure the script runs in the correct directory
-csv_path = '/Dataset/song_lyrics_subset.csv'  # Path to full CSV
+csv_path = 'Dataset/song_lyrics_subset.csv'  # Path to full CSV
 batch_size = 100                # Number of lyrics per chunk
 batch_index = 1                  # Set to 0 for first 1000, 1 for next 1000, etc.
 
