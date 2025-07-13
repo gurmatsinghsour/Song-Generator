@@ -12,9 +12,9 @@
 - [Project Overview](#project-overview)  
 - [System Architecture & Workflow](#system-architecture--workflow)  
 - [Features](#features)  
-- [Technology Stack](#technology-stack)  
-- [Installation & Usage](#installation--usage)  
-- [Notice of Authorship and Academic Integrity](#notice-of-authorship-and-academic-integrity)  
+- [Technology Stack](#technology-stack)
+- [Installation & Usage](#installation--usage)
+- [Notice of Authorship and Academic Integrity](#notice-of-authorship-and-academic-integrity)
 - [License](#license)  
 
 ---
@@ -64,6 +64,38 @@ The goal is to create an end-to-end pipeline: a user provides a high-level creat
 - **Data Acquisition:** Kaggle Datasets, Genius API  
 - **Frontend:** HTML, CSS, JavaScript  
 - **Deployment (Optional):** Google Colab (training), Heroku / PythonAnywhere (hosting)
+
+---
+
+## Installation & Usage
+
+1. Install the core dependencies:
+
+   ```bash
+   pip install tensorflow google-generativeai audiocraft
+   ```
+
+2. Ensure your trained model files reside in the `Models/` folder and the tokenizer is available in `Tokenizer/tokenizer.pkl`.
+
+3. Set your Gemini API key (optional for Gemini lyrics):
+
+   ```bash
+   export GEMINI_API_KEY=<YOUR_KEY>
+   ```
+
+4. Run the generator script and follow the prompts (CLI option):
+
+   ```bash
+   python generate_song.py
+   ```
+
+5. Or start the FastAPI server:
+
+   ```bash
+   uvicorn app:app --reload
+   ```
+
+Use the `/generate` endpoint to retrieve lyrics from both models and `/song` to create an `.mp3` from your chosen lyrics.
 
 ---
 
