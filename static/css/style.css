@@ -1,0 +1,360 @@
+/* Cyberpunk Terminal Style for AI Song Generator */
+
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Fira+Code:wght@300;400;500&display=swap');
+
+:root {
+    --cyber-purple: #8b5cf6;
+    --cyber-pink: #ec4899;
+    --cyber-blue: #3b82f6;
+    --cyber-green: #10b981;
+    --cyber-dark: #0f0f23;
+    --cyber-darker: #0a0a18;
+    --cyber-light: #1e1e3f;
+    --cyber-text: #e5e7eb;
+    --cyber-accent: #fbbf24;
+    --terminal-green: #00ff41;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background: linear-gradient(135deg, var(--cyber-darker) 0%, var(--cyber-dark) 50%, #1a1a2e 100%);
+    color: var(--cyber-text);
+    font-family: 'Fira Code', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+/* Animated background */
+body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: 
+        radial-gradient(circle at 20% 80%, rgba(139, 92, 246, 0.3) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(236, 72, 153, 0.3) 0%, transparent 50%),
+        radial-gradient(circle at 40% 40%, rgba(59, 130, 246, 0.2) 0%, transparent 50%);
+    z-index: -1;
+    animation: pulse 4s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+    0% { opacity: 0.5; }
+    100% { opacity: 0.8; }
+}
+
+.container-fluid {
+    background: rgba(15, 15, 35, 0.8);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    min-height: 100vh;
+}
+
+/* Header */
+header {
+    background: linear-gradient(90deg, var(--cyber-purple), var(--cyber-pink), var(--cyber-blue)) !important;
+    border: none;
+    border-bottom: 2px solid var(--cyber-accent);
+    position: relative;
+    overflow: hidden;
+}
+
+header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    animation: scan 3s infinite;
+}
+
+@keyframes scan {
+    0% { left: -100%; }
+    100% { left: 100%; }
+}
+
+header h1 {
+    font-family: 'Orbitron', monospace;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-shadow: 0 0 20px rgba(139, 92, 246, 0.8);
+}
+
+/* Cards */
+.card {
+    background: linear-gradient(145deg, rgba(30, 30, 63, 0.9), rgba(15, 15, 35, 0.9));
+    border: 1px solid rgba(139, 92, 246, 0.5);
+    border-radius: 0;
+    box-shadow: 
+        0 0 20px rgba(139, 92, 246, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    position: relative;
+    overflow: hidden;
+}
+
+.card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--cyber-accent), transparent);
+    animation: pulse-line 2s ease-in-out infinite;
+}
+
+@keyframes pulse-line {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
+}
+
+.card-header {
+    background: linear-gradient(90deg, var(--cyber-purple), var(--cyber-pink)) !important;
+    border: none;
+    border-bottom: 1px solid var(--cyber-accent);
+    color: white;
+    font-family: 'Orbitron', monospace;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.card-body {
+    background: rgba(15, 15, 35, 0.5);
+}
+
+/* Form Elements */
+.form-control, .form-select {
+    background: rgba(15, 15, 35, 0.8);
+    border: 1px solid rgba(139, 92, 246, 0.5);
+    color: var(--cyber-text);
+    font-family: 'Fira Code', monospace;
+    border-radius: 0;
+}
+
+.form-control:focus, .form-select:focus {
+    background: rgba(15, 15, 35, 0.9);
+    border-color: var(--cyber-accent);
+    box-shadow: 0 0 0 0.2rem rgba(251, 191, 36, 0.25);
+    color: var(--cyber-text);
+}
+
+.form-label {
+    color: var(--cyber-accent);
+    font-family: 'Orbitron', monospace;
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    letter-spacing: 1px;
+}
+
+/* Buttons */
+.btn {
+    background: linear-gradient(45deg, var(--cyber-purple), var(--cyber-pink));
+    border: 1px solid var(--cyber-accent);
+    color: white;
+    font-family: 'Orbitron', monospace;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-radius: 0;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s ease;
+}
+
+.btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s;
+}
+
+.btn:hover::before {
+    left: 100%;
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(139, 92, 246, 0.4);
+    border-color: var(--cyber-accent);
+}
+
+.btn-success {
+    background: linear-gradient(45deg, var(--cyber-green), var(--terminal-green));
+}
+
+.btn-warning {
+    background: linear-gradient(45deg, var(--cyber-accent), #f59e0b);
+}
+
+.btn-info {
+    background: linear-gradient(45deg, var(--cyber-blue), var(--cyber-purple));
+}
+
+/* Lyrics Display */
+.lyrics-display {
+    background: rgba(15, 15, 35, 0.9);
+    border: 1px solid var(--cyber-green);
+    color: var(--terminal-green);
+    font-family: 'Fira Code', monospace;
+    padding: 20px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    max-height: 400px;
+    overflow-y: auto;
+    position: relative;
+}
+
+.lyrics-display::before {
+    content: '> GENERATED_LYRICS.txt';
+    position: absolute;
+    top: -25px;
+    left: 0;
+    color: var(--cyber-accent);
+    font-size: 0.8rem;
+    font-weight: bold;
+}
+
+/* Loading Spinner */
+.spinner-border {
+    color: var(--cyber-purple);
+    width: 3rem;
+    height: 3rem;
+}
+
+/* Toast */
+.toast {
+    background: rgba(15, 15, 35, 0.95);
+    border: 1px solid var(--cyber-purple);
+    color: var(--cyber-text);
+    font-family: 'Fira Code', monospace;
+}
+
+/* Status Indicators */
+.status-online {
+    color: var(--terminal-green);
+}
+
+.status-offline {
+    color: var(--cyber-pink);
+}
+
+.badge {
+    font-family: 'Fira Code', monospace;
+    font-weight: 500;
+}
+
+/* Audio Player */
+audio {
+    width: 100%;
+    background: rgba(15, 15, 35, 0.8);
+    border: 1px solid var(--cyber-purple);
+}
+
+/* Recent Songs */
+.recent-song-item {
+    background: rgba(30, 30, 63, 0.8);
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    border-left: 3px solid var(--cyber-accent);
+    padding: 15px;
+    margin-bottom: 10px;
+    transition: all 0.3s ease;
+    font-family: 'Fira Code', monospace;
+}
+
+.recent-song-item:hover {
+    background: rgba(30, 30, 63, 1);
+    border-color: var(--cyber-accent);
+    transform: translateX(5px);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--cyber-dark);
+}
+
+::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, var(--cyber-purple), var(--cyber-pink));
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, var(--cyber-pink), var(--cyber-accent));
+}
+
+/* Terminal Effect */
+.terminal-text {
+    font-family: 'Fira Code', monospace;
+    color: var(--terminal-green);
+    text-shadow: 0 0 5px currentColor;
+}
+
+/* Glitch Effect */
+.glitch {
+    position: relative;
+    animation: glitch 2s infinite;
+}
+
+@keyframes glitch {
+    0%, 90%, 100% {
+        transform: translate(0);
+    }
+    10% {
+        transform: translate(-2px, 2px);
+    }
+    20% {
+        transform: translate(2px, -2px);
+    }
+    30% {
+        transform: translate(-2px, 2px);
+    }
+    40% {
+        transform: translate(2px, -2px);
+    }
+    50% {
+        transform: translate(-2px, 2px);
+    }
+    60% {
+        transform: translate(2px, -2px);
+    }
+    70% {
+        transform: translate(-2px, 2px);
+    }
+    80% {
+        transform: translate(2px, -2px);
+    }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .container {
+        padding: 0 10px;
+    }
+    
+    header h1 {
+        font-size: 1.5rem;
+    }
+    
+    .card {
+        margin-bottom: 15px;
+    }
+}
