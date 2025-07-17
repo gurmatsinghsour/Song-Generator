@@ -17,12 +17,86 @@ SUNO_API_KEY = os.getenv('SUNO_API_KEY')
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-pro')
+    model = genai.GenerativeModel('gemini-2.0-flash')
 else:
     print("WARNING: GEMINI_API_KEY not found in environment variables")
     model = None
 
-generated_content = {}
+# File-based storage for content persistence across restarts
+CONTENT_STORAGE_FILE = 'generated_content.json'
+
+def load_generated_content():
+    """Load content from file"""
+    try:
+        if os.path.exists(CONTENT_STORAGE_FILE):
+            with open(CONTENT_STORAGE_FILE, 'r', encoding='utf-8') as f:
+                content = json.load(f)
+                return content
+        else:
+            print(f"Storage file {CONTENT_STORAGE_FILE} does not exist, starting with empty content")
+    except Exception as e:
+        print(f"Error loading content file: {e}")
+    return {}
+
+def save_generated_content(content_dict):
+    """Save content to file"""
+    try:
+        with open(CONTENT_STORAGE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(content_dict, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"Error saving content file: {e}")
+
+generated_content = load_generated_content()
+
+def clean_lyrics(raw_text):
+    """Clean up Gemini's output to extract just the lyrics"""
+    lines = raw_text.split('\n')
+    cleaned_lines = []
+    
+    # Skip introductory text and explanations
+    start_processing = False
+    
+    for line in lines:
+        stripped = line.strip()
+        
+        # Skip empty lines at the beginning
+        if not stripped and not start_processing:
+            continue
+            
+        # Skip explanatory text before the actual lyrics
+        if any(phrase in stripped.lower() for phrase in [
+            'here are', 'lyrics about', 'song lyrics', 'title:', '**title:', 
+            'designed to be', 'okay,', 'sure,', 'i\'ll create'
+        ]):
+            continue
+            
+        # Start processing when we hit actual song structure
+        if any(tag in stripped.lower() for tag in [
+            '[verse', '[chorus', '[bridge', '[intro', '[outro'
+        ]):
+            start_processing = True
+            
+        if start_processing:
+            # Remove markdown formatting
+            cleaned = stripped.replace('**', '').replace('*', '')
+            
+            # Skip lines that are just explanations
+            if not any(phrase in cleaned.lower() for phrase in [
+                'this song', 'the lyrics', 'these lyrics'
+            ]):
+                cleaned_lines.append(cleaned)
+    
+    # Join and clean up extra whitespace
+    result = '\n'.join(cleaned_lines)
+    
+    # Remove any remaining explanatory text at the end
+    result = result.split('---')[0]  # Remove anything after separator
+    
+    # Clean up multiple newlines
+    while '\n\n\n' in result:
+        result = result.replace('\n\n\n', '\n\n')
+    
+    return result.strip()
 
 @app.route('/')
 def index():
@@ -43,23 +117,26 @@ def generate_lyrics():
         mood = data.get('mood', 'happy')
         
         gemini_prompt = f"""
-        Generate song lyrics with the following specifications:
-        - Theme/Topic: {prompt}
+        Create song lyrics only. No explanations, no titles, no descriptions.
+        
+        Specifications:
+        - Theme: {prompt}
         - Genre: {genre}
         - Mood: {mood}
         
         Requirements:
-        - Create a complete song with verse, chorus, and bridge
-        - Make it catchy and memorable
-        - Include proper song structure
-        - Keep it appropriate and radio-friendly
-        - Length: 2-3 verses, 2-3 choruses, 1 bridge
+        - Complete song structure: 2-3 verses, 2-3 choruses, 1 bridge
+        - Radio-friendly and catchy
+        - Use clear labels: [Verse 1], [Chorus], [Verse 2], [Bridge], [Outro]
         
-        Format the output clearly with labels like [Verse 1], [Chorus], [Verse 2], etc.
+        Output format: Start directly with [Verse 1] and provide only the lyrics.
         """
         
         response = model.generate_content(gemini_prompt)
-        lyrics = response.text
+        raw_lyrics = response.text
+        
+        # Clean up the lyrics - remove extra formatting and explanations
+        lyrics = clean_lyrics(raw_lyrics)
         
         content_id = str(datetime.now().timestamp())
         generated_content[content_id] = {
@@ -69,6 +146,9 @@ def generate_lyrics():
             'mood': mood,
             'timestamp': datetime.now().isoformat()
         }
+        
+        # Save to file for persistence
+        save_generated_content(generated_content)
         
         return jsonify({
             'success': True,
@@ -85,33 +165,49 @@ def generate_lyrics():
 @app.route('/generate_song', methods=['POST'])
 def generate_song():
     try:
+        # Reload content from file to ensure we have the latest data
+        global generated_content
+        generated_content = load_generated_content()
+        
         data = request.json
         content_id = data.get('content_id')
+        
+        if not content_id:
+            return jsonify({
+                'success': False,
+                'error': 'No content ID provided'
+            })
         
         if content_id not in generated_content:
             return jsonify({
                 'success': False,
-                'error': 'Content not found'
+                'error': f'Content not found for ID: {content_id}. Available IDs: {list(generated_content.keys())}'
             })
         
         content = generated_content[content_id]
         lyrics = content['lyrics']
         genre = content['genre']
         
-        print(f"Generating song for content_id: {content_id}")
-        print(f"Genre: {genre}")
-        print(f"Lyrics length: {len(lyrics)} characters")
-        
         song_result = generate_audio_with_suno(lyrics, genre)
         
         if song_result:
             generated_content[content_id]['song_url'] = song_result
+            save_generated_content(generated_content)  # Save to file
             
-            return jsonify({
-                'success': True,
-                'song_url': song_result,
-                'message': 'Song generated successfully!'
-            })
+            # Check if it's a task ID (async) or actual URL
+            if song_result.startswith("Task submitted:"):
+                return jsonify({
+                    'success': True,
+                    'message': 'Song generation started! This may take a few minutes to complete.',
+                    'task_info': song_result,
+                    'note': 'Audio generation is asynchronous. The song will be ready shortly.'
+                })
+            else:
+                return jsonify({
+                    'success': True,
+                    'song_url': song_result,
+                    'message': 'Song generated successfully!'
+                })
         else:
             return jsonify({
                 'success': False,
@@ -119,7 +215,6 @@ def generate_song():
             })
             
     except Exception as e:
-        print(f"Error in generate_song: {e}")
         return jsonify({
             'success': False,
             'error': f'Server error: {str(e)}'
@@ -136,48 +231,197 @@ def generate_audio_with_suno(lyrics, genre):
         }
         
         title_line = lyrics.split('\n')[0] if lyrics else "Generated Song"
-        title = title_line.replace('[', '').replace(']', '').strip()[:50]
+        title = title_line.replace('[', '').replace(']', '').strip()[:80]  # Max 80 chars
+        if not title or title.isspace():
+            title = "AI Generated Song"
+        
+        # Limit prompt to 3000 characters for V3_5 model
+        prompt_text = lyrics[:3000] if len(lyrics) > 3000 else lyrics
+        
+        # Limit style to 200 characters for V3_5 model
+        style_text = genre[:200] if len(genre) > 200 else genre
         
         payload = {
-            "prompt": lyrics,
-            "style": genre,
+            "prompt": prompt_text,
+            "style": style_text,
             "title": title,
             "customMode": True,
-            "instrumental": False,
+            "instrumental": False,  # We want vocals with lyrics
             "model": "V3_5",
-            "negativeTags": "Heavy Metal, Noise" if genre != "rock" else "Quiet, Ambient"
+            "negativeTags": "Heavy Metal, Noise" if genre.lower() != "rock" else "Quiet, Ambient",
+            "callBackUrl": "https://api.example.com/callback"
         }
         
-        print(f"Sending request to Suno API...")
-        print(f"Title: {title}")
-        print(f"Genre: {genre}")
-        
-        response = requests.post(url, headers=headers, json=payload)
-        
-        print(f"Response status: {response.status_code}")
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
         
         if response.status_code == 200:
             result = response.json()
-            print(f"Suno API response: {result}")
             
-            audio_url = (result.get('audio_url') or 
-                        result.get('url') or 
-                        result.get('song_url') or
-                        result.get('download_url'))
-            
-            if audio_url:
-                return audio_url
+            # Check if the response has the expected structure
+            if result.get('code') == 200:
+                data = result.get('data')
+                if data:
+                    # The API returns taskId (camelCase) and the actual audio URLs come via callback
+                    task_id = data.get('taskId') if isinstance(data, dict) else "pending"
+                    return f"Task submitted: {task_id}"
+                else:
+                    return None
             else:
-                print("No audio URL found in response")
                 return None
         else:
-            print(f"Suno API error: {response.status_code}")
-            print(f"Error response: {response.text}")
             return None
         
-    except Exception as e:
-        print(f"Error generating audio: {e}")
+    except requests.exceptions.Timeout:
         return None
+    except requests.exceptions.RequestException as e:
+        return None
+    except Exception as e:
+        return None
+
+@app.route('/song_status')
+def song_status():
+    """Show status of all songs"""
+    current_content = load_generated_content()
+    
+    songs = []
+    for content_id, content in current_content.items():
+        song_url = content.get('song_url', '')
+        
+        if song_url.startswith('Task submitted:'):
+            task_id = song_url.replace('Task submitted: ', '')
+            if task_id and task_id != 'None':
+                status = 'Processing'
+                download_url = None
+            else:
+                status = 'Failed'
+                download_url = None
+        elif song_url.startswith('http'):
+            status = 'Ready'
+            download_url = song_url
+        else:
+            status = 'Pending'
+            download_url = None
+        
+        songs.append({
+            'content_id': content_id,
+            'prompt': content.get('prompt', 'Unknown'),
+            'genre': content.get('genre', 'Unknown'),
+            'timestamp': content.get('timestamp', ''),
+            'status': status,
+            'download_url': download_url,
+            'task_id': task_id if 'task_id' in locals() else None
+        })
+    
+    return jsonify({
+        'songs': songs,
+        'total': len(songs),
+        'note': 'Songs typically take 1-3 minutes to process. Refresh to check for updates.'
+    })
+
+@app.route('/check_song_status/<content_id>')
+def check_song_status(content_id):
+    """Check the status of a song generation task"""
+    try:
+        # Reload content from file
+        current_content = load_generated_content()
+        
+        if content_id not in current_content:
+            return jsonify({
+                'success': False,
+                'error': 'Content not found'
+            })
+        
+        content = current_content[content_id]
+        song_url = content.get('song_url', '')
+        
+        if not song_url or not song_url.startswith('Task submitted:'):
+            return jsonify({
+                'success': False,
+                'error': 'No task found for this content'
+            })
+        
+        # Extract task ID from the stored string
+        task_id = song_url.replace('Task submitted: ', '')
+        if task_id == 'None':
+            return jsonify({
+                'success': False,
+                'error': 'Invalid task ID'
+            })
+        
+        # Check status with Suno API
+        status_url = f"https://api.sunoapi.org/api/v1/query?taskId={task_id}"
+        headers = {
+            "Authorization": f"Bearer {SUNO_API_KEY}",
+            "Accept": "application/json"
+        }
+        
+        response = requests.get(status_url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            result = response.json()
+            
+            if result.get('code') == 200:
+                data = result.get('data')
+                if data and isinstance(data, list) and len(data) > 0:
+                    song_data = data[0]  # Get first song
+                    status = song_data.get('status')
+                    
+                    if status == 'complete':
+                        # Song is ready! Get the download URL
+                        audio_url = song_data.get('audioUrl')
+                        video_url = song_data.get('videoUrl') 
+                        
+                        if audio_url:
+                            # Update the content with the actual download URL
+                            current_content[content_id]['song_url'] = audio_url
+                            current_content[content_id]['video_url'] = video_url
+                            current_content[content_id]['status'] = 'complete'
+                            save_generated_content(current_content)
+                            
+                            return jsonify({
+                                'success': True,
+                                'status': 'complete',
+                                'audio_url': audio_url,
+                                'video_url': video_url,
+                                'message': 'Song is ready for download!'
+                            })
+                    
+                    elif status in ['queued', 'running']:
+                        return jsonify({
+                            'success': True,
+                            'status': status,
+                            'message': f'Song is still {status}. Please check again in a moment.'
+                        })
+                    
+                    else:
+                        return jsonify({
+                            'success': False,
+                            'status': status,
+                            'error': f'Song generation failed with status: {status}'
+                        })
+                
+                return jsonify({
+                    'success': False,
+                    'error': 'No data in status response'
+                })
+            
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f'API error: {result.get("msg", "Unknown error")}'
+                })
+        
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Status check failed: {response.status_code}'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Server error: {str(e)}'
+        })
 
 @app.route('/save_lyrics', methods=['POST'])
 def save_lyrics():
@@ -222,52 +466,7 @@ def api_status():
         'gemini': 'configured' if GEMINI_API_KEY else 'not configured',
         'suno': 'configured' if SUNO_API_KEY else 'not configured'
     }
-    
-    if status['suno'] == 'configured':
-        try:
-            response = requests.get("https://api.sunoapi.org", timeout=5)
-            status['suno_connection'] = 'reachable' if response.status_code in [200, 404] else 'unreachable'
-        except:
-            status['suno_connection'] = 'unreachable'
-    else:
-        status['suno_connection'] = 'not configured'
-    
     return jsonify(status)
-
-@app.route('/test_suno', methods=['POST'])
-def test_suno():
-    try:
-        test_lyrics = """[Verse 1]
-This is a test song
-Just to check if everything works
-Simple melody and words
-Testing the API connection
-
-[Chorus]  
-Test test test
-Making sure it's working
-Test test test
-Everything is perfect"""
-
-        result = generate_audio_with_suno(test_lyrics, "pop")
-        
-        if result:
-            return jsonify({
-                'success': True,
-                'message': 'Suno API test successful!',
-                'test_url': result
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': 'Suno API test failed'
-            })
-            
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        })
 
 if __name__ == '__main__':
     os.makedirs('generated_songs', exist_ok=True)
@@ -275,20 +474,9 @@ if __name__ == '__main__':
     os.makedirs('static/css', exist_ok=True)
     os.makedirs('static/js', exist_ok=True)
     
-    print("Song Generator Web App Starting...")
-    print("Features:")
-    print("  • Gemini AI lyrics generation")
-    print("  • User approval system")
-    print("  • Audio generation with Suno API")
-    print("  • Clean web interface")
-    print("\nAPI Status:")
-    print(f"  • Gemini API: {'Configured' if GEMINI_API_KEY else 'Not configured'}")
-    print(f"  • Suno API: {'Configured' if SUNO_API_KEY else 'Not configured'}")
+    print("Song Generator Web App")
+    print(f"Gemini API: {'✓' if GEMINI_API_KEY else '✗'}")
+    print(f"Suno API: {'✓' if SUNO_API_KEY else '✗'}")
+    print("Server: http://localhost:5003")
     
-    if not GEMINI_API_KEY or not SUNO_API_KEY:
-        print("\nPlease check your .env file and ensure all API keys are set!")
-    
-    print("\nStarting Flask server...")
-    print("Open your browser to: http://localhost:5000")
-    
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5003)
