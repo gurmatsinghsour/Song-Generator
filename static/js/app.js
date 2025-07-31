@@ -1,5 +1,6 @@
 let currentContentId = null;
 let recentSongs = JSON.parse(localStorage.getItem('recentSongs') || '[]');
+let statusCheckInterval = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     console.log('AI Song Generator System Online');
@@ -46,11 +47,13 @@ async function generateLyrics() {
             showToast('LYRICS GENERATION COMPLETE', 'success');
             
             addToRecentSongs({
+                content_id: data.content_id,
                 prompt: prompt,
                 genre: genre,
                 mood: mood,
                 lyrics: data.lyrics.substring(0, 100) + '...',
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                status: 'lyrics_generated'
             });
         } else {
             showToast('GENERATION FAILED: ' + data.error, 'error');
@@ -128,7 +131,7 @@ async function generateSong() {
         return;
     }
     
-    showLoading(true);
+    showLoading(true, 'INITIATING AUDIO SYNTHESIS...');
     
     try {
         const response = await fetch('/generate_song', {
@@ -144,8 +147,14 @@ async function generateSong() {
         const data = await response.json();
         
         if (data.success) {
-            displaySongPlayer(data.song_url);
-            showToast('AUDIO SYNTHESIS COMPLETE', 'success');
+            showToast('SYNTHESIS INITIATED - TASK ID: ' + data.task_id, 'success');
+            showSongProgress();
+            
+            // Update recent songs with task info
+            updateRecentSongStatus(currentContentId, 'generating', data.task_id);
+            
+            // Start monitoring the song status
+            startStatusMonitoring();
         } else {
             showToast('SYNTHESIS FAILED: ' + data.error, 'error');
         }
@@ -156,12 +165,149 @@ async function generateSong() {
     }
 }
 
-function displaySongPlayer(songUrl) {
-    document.getElementById('songSource').src = songUrl;
-    document.getElementById('songPlayer').style.display = 'block';
+function showSongProgress() {
+    const progressHtml = `
+        <div id="songProgress" class="mt-3">
+            <div class="d-flex align-items-center mb-2">
+                <div class="spinner-border spinner-border-sm text-warning me-2" role="status"></div>
+                <span class="terminal-text">PROCESSING AUDIO...</span>
+            </div>
+            <div class="progress">
+                <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" 
+                     role="progressbar" style="width: 100%"></div>
+            </div>
+            <small class="text-muted mt-1 d-block">This typically takes 1-3 minutes</small>
+        </div>
+    `;
     
-    const audio = document.querySelector('#songPlayer audio');
-    audio.load();
+    document.querySelector('#songCard .card-body').insertAdjacentHTML('beforeend', progressHtml);
+}
+
+function startStatusMonitoring() {
+    if (statusCheckInterval) {
+        clearInterval(statusCheckInterval);
+    }
+    
+    statusCheckInterval = setInterval(async () => {
+        await checkSongStatus();
+    }, 10000); // Check every 10 seconds
+    
+    // Also check immediately
+    setTimeout(checkSongStatus, 2000);
+}
+
+async function checkSongStatus() {
+    if (!currentContentId) return;
+    
+    try {
+        const response = await fetch(`/check_song_status/${currentContentId}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            if (data.status === 'completed') {
+                // Song is ready!
+                clearInterval(statusCheckInterval);
+                statusCheckInterval = null;
+                
+                displayCompletedSong(data);
+                showToast('AUDIO SYNTHESIS COMPLETE!', 'success');
+                
+                // Update recent songs
+                updateRecentSongStatus(currentContentId, 'completed', null, data.audio_url);
+                
+            } else if (data.status === 'failed') {
+                clearInterval(statusCheckInterval);
+                statusCheckInterval = null;
+                
+                showToast('SYNTHESIS FAILED: ' + (data.error_message || 'Unknown error'), 'error');
+                updateRecentSongStatus(currentContentId, 'failed');
+                
+                // Remove progress indicator
+                const progressElement = document.getElementById('songProgress');
+                if (progressElement) {
+                    progressElement.remove();
+                }
+            }
+            // For 'generating' or 'submitted' status, keep waiting
+        }
+    } catch (error) {
+        console.error('Status check error:', error);
+    }
+}
+
+function displayCompletedSong(data) {
+    // Remove progress indicator
+    const progressElement = document.getElementById('songProgress');
+    if (progressElement) {
+        progressElement.remove();
+    }
+    
+    // Display player with download options
+    const playerHtml = `
+        <div id="songPlayer" class="mt-4">
+            <h6 class="terminal-text">AUDIO OUTPUT COMPLETE:</h6>
+            <div class="song-info mb-3">
+                <div class="row">
+                    <div class="col-md-8">
+                        <strong>${data.title || 'Generated Song'}</strong><br>
+                        <small class="text-muted">Duration: ${data.duration ? Math.round(data.duration) + 's' : 'Unknown'}</small>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        ${data.image_url ? `<img src="${data.image_url}" alt="Cover" style="width: 60px; height: 60px; object-fit: cover; border-radius: 4px;">` : ''}
+                    </div>
+                </div>
+            </div>
+            <audio controls class="w-100 mb-3">
+                <source src="${data.audio_url}" type="audio/mpeg">
+                Your browser does not support the audio element.
+            </audio>
+            <div class="btn-group w-100" role="group">
+                <button class="btn btn-success" onclick="downloadSongDirect('${currentContentId}')">
+                    <i class="fas fa-download"></i> DOWNLOAD MP3
+                </button>
+                <button class="btn btn-info" onclick="copySongUrl('${data.audio_url}')">
+                    <i class="fas fa-link"></i> COPY URL
+                </button>
+                <button class="btn btn-warning" onclick="shareSong('${data.audio_url}')">
+                    <i class="fas fa-share-alt"></i> SHARE
+                </button>
+            </div>
+        </div>
+    `;
+    
+    // Remove any existing player
+    const existingPlayer = document.getElementById('songPlayer');
+    if (existingPlayer) {
+        existingPlayer.remove();
+    }
+    
+    document.querySelector('#songCard .card-body').insertAdjacentHTML('beforeend', playerHtml);
+}
+
+async function downloadSongDirect(contentId) {
+    try {
+        showToast('INITIATING DOWNLOAD...', 'info');
+        
+        // Create a temporary link to trigger download
+        const link = document.createElement('a');
+        link.href = `/download_song/${contentId}`;
+        link.download = ''; // Let the server set the filename
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        showToast('DOWNLOAD STARTED', 'success');
+    } catch (error) {
+        showToast('DOWNLOAD FAILED', 'error');
+    }
+}
+
+function copySongUrl(url) {
+    navigator.clipboard.writeText(url).then(() => {
+        showToast('URL COPIED TO CLIPBOARD', 'success');
+    }).catch(() => {
+        showToast('COPY OPERATION FAILED', 'error');
+    });
 }
 
 async function checkApiStatus() {
@@ -183,35 +329,19 @@ async function checkApiStatus() {
             </div>
         `;
         
-        const sunoStatus = status.suno === 'configured' ? 
-            (status.suno_connection === 'reachable' ? 'ONLINE' : 'CONNECTION ERROR') : 
-            'OFFLINE';
-        const sunoClass = status.suno === 'configured' && status.suno_connection === 'reachable' ? 
-            'bg-success' : 'bg-danger';
-        
         statusHtml += `
             <div class="col-md-6">
                 <div class="d-flex align-items-center">
                     <i class="fas fa-music me-2 ${status.suno === 'configured' ? 'status-online' : 'status-offline'}"></i>
                     <span>SUNO API: </span>
-                    <span class="ms-2 badge ${sunoClass}">
-                        ${sunoStatus}
+                    <span class="ms-2 badge ${status.suno === 'configured' ? 'bg-success' : 'bg-danger'}">
+                        ${status.suno === 'configured' ? 'ONLINE' : 'OFFLINE'}
                     </span>
                 </div>
             </div>
         `;
         
         statusHtml += '</div>';
-        
-        if (status.suno === 'configured') {
-            statusHtml += `
-                <div class="mt-3">
-                    <button class="btn btn-sm btn-outline-primary" onclick="testSunoAPI()">
-                        <i class="fas fa-vial"></i> TEST SUNO API
-                    </button>
-                </div>
-            `;
-        }
         
         if (status.gemini !== 'configured' || status.suno !== 'configured') {
             statusHtml += `
@@ -221,6 +351,9 @@ async function checkApiStatus() {
                 </div>
             `;
         }
+        
+        // Add song status overview
+        statusHtml += await getSongStatusOverview();
         
         document.getElementById('apiStatus').innerHTML = statusHtml;
         
@@ -234,36 +367,49 @@ async function checkApiStatus() {
     }
 }
 
-async function testSunoAPI() {
-    showToast('TESTING SUNO API CONNECTION...', 'info');
-    
+async function getSongStatusOverview() {
     try {
-        const response = await fetch('/test_suno', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
-        
+        const response = await fetch('/song_status');
         const data = await response.json();
         
-        if (data.success) {
-            showToast('SUNO API TEST SUCCESSFUL', 'success');
-        } else {
-            showToast('SUNO API TEST FAILED: ' + (data.message || data.error), 'error');
+        if (data.songs && data.songs.length > 0) {
+            const processing = data.songs.filter(s => ['generating', 'submitted'].includes(s.status)).length;
+            const completed = data.songs.filter(s => s.status === 'completed').length;
+            const failed = data.songs.filter(s => s.status === 'failed').length;
+            
+            return `
+                <div class="mt-3 pt-3 border-top">
+                    <h6 class="text-muted mb-2">GENERATION QUEUE:</h6>
+                    <div class="row text-center">
+                        <div class="col-4">
+                            <div class="badge bg-warning">${processing}</div>
+                            <small class="d-block text-muted">Processing</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="badge bg-success">${completed}</div>
+                            <small class="d-block text-muted">Completed</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="badge bg-danger">${failed}</div>
+                            <small class="d-block text-muted">Failed</small>
+                        </div>
+                    </div>
+                </div>
+            `;
         }
-        
     } catch (error) {
-        showToast('API TEST ERROR', 'error');
+        console.error('Error getting song status overview:', error);
     }
+    
+    return '';
 }
 
-function showLoading(show) {
+function showLoading(show, message = 'PROCESSING...') {
     document.getElementById('loadingSpinner').style.display = show ? 'block' : 'none';
     document.getElementById('generateBtn').disabled = show;
     
     if (show) {
-        document.getElementById('generateBtn').innerHTML = '<i class="fas fa-cog fa-spin"></i> PROCESSING...';
+        document.getElementById('generateBtn').innerHTML = '<i class="fas fa-cog fa-spin"></i> ' + message;
     } else {
         document.getElementById('generateBtn').innerHTML = '<i class="fas fa-play"></i> EXECUTE GENERATION';
     }
@@ -272,6 +418,12 @@ function showLoading(show) {
 function hideCards() {
     document.getElementById('lyricsCard').style.display = 'none';
     document.getElementById('songCard').style.display = 'none';
+    
+    // Clear any status monitoring
+    if (statusCheckInterval) {
+        clearInterval(statusCheckInterval);
+        statusCheckInterval = null;
+    }
 }
 
 function showToast(message, type = 'info') {
@@ -309,6 +461,17 @@ function addToRecentSongs(song) {
     loadRecentSongs();
 }
 
+function updateRecentSongStatus(contentId, status, taskId = null, audioUrl = null) {
+    const songIndex = recentSongs.findIndex(song => song.content_id === contentId);
+    if (songIndex !== -1) {
+        recentSongs[songIndex].status = status;
+        if (taskId) recentSongs[songIndex].task_id = taskId;
+        if (audioUrl) recentSongs[songIndex].audio_url = audioUrl;
+        localStorage.setItem('recentSongs', JSON.stringify(recentSongs));
+        loadRecentSongs();
+    }
+}
+
 function loadRecentSongs() {
     const container = document.getElementById('recentSongs');
     
@@ -320,27 +483,53 @@ function loadRecentSongs() {
     let html = '';
     recentSongs.forEach((song, index) => {
         const date = new Date(song.timestamp).toLocaleDateString();
+        const statusBadge = getStatusBadge(song.status);
+        
         html += `
             <div class="recent-song-item">
                 <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <h6 class="mb-1">${song.prompt}</h6>
+                    <div class="flex-grow-1">
+                        <div class="d-flex align-items-center mb-1">
+                            <h6 class="mb-0 me-2">${song.prompt}</h6>
+                            ${statusBadge}
+                        </div>
                         <small class="text-muted">
                             <i class="fas fa-wave-square"></i> ${song.genre} • 
                             <i class="fas fa-microchip"></i> ${song.mood} • 
                             <i class="fas fa-calendar"></i> ${date}
                         </small>
                         <p class="mt-2 mb-0 small">${song.lyrics}</p>
+                        ${song.status === 'completed' && song.audio_url ? `
+                            <div class="mt-2">
+                                <button class="btn btn-sm btn-success" onclick="downloadSongDirect('${song.content_id}')">
+                                    <i class="fas fa-download"></i> Download
+                                </button>
+                            </div>
+                        ` : ''}
                     </div>
-                    <button class="btn btn-sm btn-outline-primary" onclick="regenerateFromHistory(${index})">
-                        <i class="fas fa-sync"></i>
-                    </button>
+                    <div class="ms-2">
+                        <button class="btn btn-sm btn-outline-primary" onclick="regenerateFromHistory(${index})">
+                            <i class="fas fa-sync"></i>
+                        </button>
+                    </div>
                 </div>
             </div>
         `;
     });
     
     container.innerHTML = html;
+}
+
+function getStatusBadge(status) {
+    const badges = {
+        'lyrics_generated': '<span class="badge bg-info">Lyrics Ready</span>',
+        'generating': '<span class="badge bg-warning">Processing</span>',
+        'submitted': '<span class="badge bg-warning">Queued</span>',
+        'completed': '<span class="badge bg-success">Ready</span>',
+        'failed': '<span class="badge bg-danger">Failed</span>'
+    };
+    
+    return badges[status] || '<span class="badge bg-secondary">Unknown</span>';
 }
 
 function regenerateFromHistory(index) {
@@ -357,23 +546,7 @@ function regenerateFromHistory(index) {
     showToast('PARAMETERS LOADED FROM HISTORY', 'info');
 }
 
-function downloadSong() {
-    const songUrl = document.getElementById('songSource').src;
-    if (songUrl && songUrl !== '') {
-        const a = document.createElement('a');
-        a.href = songUrl;
-        a.download = `ai-generated-song-${Date.now()}.mp3`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        showToast('DOWNLOAD INITIATED', 'success');
-    } else {
-        showToast('NO AUDIO DATA AVAILABLE', 'warning');
-    }
-}
-
-function shareSong() {
-    const songUrl = document.getElementById('songSource').src;
+function shareSong(songUrl) {
     if (navigator.share && songUrl) {
         navigator.share({
             title: 'AI Generated Song',
@@ -382,17 +555,16 @@ function shareSong() {
         }).then(() => {
             showToast('SHARE SUCCESSFUL', 'success');
         }).catch(() => {
-            copyToClipboard(songUrl);
+            copySongUrl(songUrl);
         });
     } else {
-        copyToClipboard(songUrl);
+        copySongUrl(songUrl);
     }
 }
 
-function copyToClipboard(text) {
-    navigator.clipboard.writeText(text).then(() => {
-        showToast('URL COPIED TO CLIPBOARD', 'success');
-    }).catch(() => {
-        showToast('COPY OPERATION FAILED', 'error');
-    });
-}
+// Cleanup on page unload
+window.addEventListener('beforeunload', function() {
+    if (statusCheckInterval) {
+        clearInterval(statusCheckInterval);
+    }
+});

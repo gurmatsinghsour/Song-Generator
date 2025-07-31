@@ -144,7 +144,8 @@ def generate_lyrics():
             'prompt': prompt,
             'genre': genre,
             'mood': mood,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'status': 'lyrics_generated'
         }
         
         # Save to file for persistence
@@ -188,27 +189,27 @@ def generate_song():
         lyrics = content['lyrics']
         genre = content['genre']
         
-        song_result = generate_audio_with_suno(lyrics, genre)
+        # Update status to indicate generation started
+        generated_content[content_id]['status'] = 'generating'
+        save_generated_content(generated_content)
         
-        if song_result:
-            generated_content[content_id]['song_url'] = song_result
-            save_generated_content(generated_content)  # Save to file
+        song_result = generate_audio_with_suno(lyrics, genre, content_id)
+        
+        if song_result and song_result.get('success'):
+            task_id = song_result.get('task_id')
+            generated_content[content_id]['task_id'] = task_id
+            generated_content[content_id]['status'] = 'submitted'
+            save_generated_content(generated_content)
             
-            # Check if it's a task ID (async) or actual URL
-            if song_result.startswith("Task submitted:"):
-                return jsonify({
-                    'success': True,
-                    'message': 'Song generation started! This may take a few minutes to complete.',
-                    'task_info': song_result,
-                    'note': 'Audio generation is asynchronous. The song will be ready shortly.'
-                })
-            else:
-                return jsonify({
-                    'success': True,
-                    'song_url': song_result,
-                    'message': 'Song generated successfully!'
-                })
+            return jsonify({
+                'success': True,
+                'task_id': task_id,
+                'message': 'Song generation started! This may take a few minutes to complete.',
+                'note': 'You will be notified when the song is ready for download.'
+            })
         else:
+            generated_content[content_id]['status'] = 'failed'
+            save_generated_content(generated_content)
             return jsonify({
                 'success': False,
                 'error': 'Failed to generate audio. Please check your Suno API key and try again.'
@@ -220,7 +221,7 @@ def generate_song():
             'error': f'Server error: {str(e)}'
         })
 
-def generate_audio_with_suno(lyrics, genre):
+def generate_audio_with_suno(lyrics, genre, content_id):
     try:
         url = "https://api.sunoapi.org/api/v1/generate"
         
@@ -231,7 +232,7 @@ def generate_audio_with_suno(lyrics, genre):
         }
         
         title_line = lyrics.split('\n')[0] if lyrics else "Generated Song"
-        title = title_line.replace('[', '').replace(']', '').strip()[:80]  # Max 80 chars
+        title = title_line.replace('[', '').replace(']', '').strip()[:80]
         if not title or title.isspace():
             title = "AI Generated Song"
         
@@ -241,15 +242,18 @@ def generate_audio_with_suno(lyrics, genre):
         # Limit style to 200 characters for V3_5 model
         style_text = genre[:200] if len(genre) > 200 else genre
         
+        # Use your actual callback URL - you'll need to make this publicly accessible
+        callback_url = f"https://33b81f980f7f.ngrok-free.app/suno_callback"  # Replace with your actual domain
+        
         payload = {
             "prompt": prompt_text,
             "style": style_text,
             "title": title,
             "customMode": True,
-            "instrumental": False,  # We want vocals with lyrics
+            "instrumental": False,
             "model": "V3_5",
             "negativeTags": "Heavy Metal, Noise" if genre.lower() != "rock" else "Quiet, Ambient",
-            "callBackUrl": "https://api.example.com/callback"
+            "callBackUrl": callback_url
         }
         
         response = requests.post(url, headers=headers, json=payload, timeout=30)
@@ -257,26 +261,91 @@ def generate_audio_with_suno(lyrics, genre):
         if response.status_code == 200:
             result = response.json()
             
-            # Check if the response has the expected structure
             if result.get('code') == 200:
                 data = result.get('data')
                 if data:
-                    # The API returns taskId (camelCase) and the actual audio URLs come via callback
-                    task_id = data.get('taskId') if isinstance(data, dict) else "pending"
-                    return f"Task submitted: {task_id}"
-                else:
-                    return None
-            else:
-                return None
-        else:
-            return None
+                    task_id = data.get('taskId') if isinstance(data, dict) else None
+                    return {
+                        'success': True,
+                        'task_id': task_id
+                    }
         
-    except requests.exceptions.Timeout:
-        return None
-    except requests.exceptions.RequestException as e:
-        return None
+        return {'success': False}
+        
     except Exception as e:
-        return None
+        print(f"Error generating audio: {e}")
+        return {'success': False}
+
+# NEW: Callback endpoint to receive notifications from Suno API
+@app.route('/suno_callback', methods=['POST'])
+def suno_callback():
+    try:
+        callback_data = request.json
+        print(f"Received callback: {json.dumps(callback_data, indent=2)}")
+        
+        code = callback_data.get('code')
+        msg = callback_data.get('msg')
+        data = callback_data.get('data', {})
+        
+        task_id = data.get('task_id')
+        callback_type = data.get('callbackType')
+        
+        if not task_id:
+            return jsonify({'status': 'received'}), 200
+        
+        # Find the content with this task_id
+        content_id = None
+        for cid, content in generated_content.items():
+            if content.get('task_id') == task_id:
+                content_id = cid
+                break
+        
+        if not content_id:
+            print(f"No content found for task_id: {task_id}")
+            return jsonify({'status': 'received'}), 200
+        
+        if code == 200 and callback_type == 'complete':
+            # Task completed successfully
+            music_data = data.get('data', [])
+            if music_data:
+                # Get the first generated track
+                first_track = music_data[0]
+                
+                # Update the content with download URLs
+                generated_content[content_id].update({
+                    'status': 'completed',
+                    'audio_url': first_track.get('audio_url'),
+                    'source_audio_url': first_track.get('source_audio_url'),
+                    'stream_audio_url': first_track.get('stream_audio_url'),
+                    'image_url': first_track.get('image_url'),
+                    'title': first_track.get('title'),
+                    'tags': first_track.get('tags'),
+                    'duration': first_track.get('duration'),
+                    'completed_at': datetime.now().isoformat()
+                })
+                
+                # Save all tracks if multiple were generated
+                if len(music_data) > 1:
+                    generated_content[content_id]['all_tracks'] = music_data
+                
+                save_generated_content(generated_content)
+                print(f"Song completed for content_id: {content_id}")
+        
+        elif code != 200:
+            # Task failed
+            generated_content[content_id].update({
+                'status': 'failed',
+                'error_message': msg,
+                'failed_at': datetime.now().isoformat()
+            })
+            save_generated_content(generated_content)
+            print(f"Song generation failed for content_id: {content_id}, error: {msg}")
+        
+        return jsonify({'status': 'received'}), 200
+        
+    except Exception as e:
+        print(f"Error processing callback: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/song_status')
 def song_status():
@@ -285,44 +354,81 @@ def song_status():
     
     songs = []
     for content_id, content in current_content.items():
-        song_url = content.get('song_url', '')
+        status = content.get('status', 'unknown')
         
-        if song_url.startswith('Task submitted:'):
-            task_id = song_url.replace('Task submitted: ', '')
-            if task_id and task_id != 'None':
-                status = 'Processing'
-                download_url = None
-            else:
-                status = 'Failed'
-                download_url = None
-        elif song_url.startswith('http'):
-            status = 'Ready'
-            download_url = song_url
-        else:
-            status = 'Pending'
-            download_url = None
-        
-        songs.append({
+        song_info = {
             'content_id': content_id,
             'prompt': content.get('prompt', 'Unknown'),
             'genre': content.get('genre', 'Unknown'),
             'timestamp': content.get('timestamp', ''),
             'status': status,
-            'download_url': download_url,
-            'task_id': task_id if 'task_id' in locals() else None
-        })
+            'task_id': content.get('task_id'),
+            'audio_url': content.get('audio_url'),
+            'image_url': content.get('image_url'),
+            'title': content.get('title'),
+            'duration': content.get('duration')
+        }
+        
+        songs.append(song_info)
     
     return jsonify({
         'songs': songs,
-        'total': len(songs),
-        'note': 'Songs typically take 1-3 minutes to process. Refresh to check for updates.'
+        'total': len(songs)
     })
+
+@app.route('/download_song/<content_id>')
+def download_song(content_id):
+    """Download the generated song"""
+    try:
+        current_content = load_generated_content()
+        
+        if content_id not in current_content:
+            return jsonify({
+                'success': False,
+                'error': 'Content not found'
+            }), 404
+        
+        content = current_content[content_id]
+        audio_url = content.get('audio_url')
+        
+        if not audio_url:
+            return jsonify({
+                'success': False,
+                'error': 'No audio URL available. Song may not be ready yet.'
+            }), 404
+        
+        # Download the file from Suno's servers
+        response = requests.get(audio_url, timeout=30)
+        
+        if response.status_code == 200:
+            # Create a filename
+            title = content.get('title', 'generated_song')
+            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            filename = f"{safe_title}.mp3"
+            
+            # Return the file as a download
+            return send_file(
+                io.BytesIO(response.content),
+                as_attachment=True,
+                download_name=filename,
+                mimetype='audio/mpeg'
+            )
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to download song from server'
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Download error: {str(e)}'
+        }), 500
 
 @app.route('/check_song_status/<content_id>')
 def check_song_status(content_id):
     """Check the status of a song generation task"""
     try:
-        # Reload content from file
         current_content = load_generated_content()
         
         if content_id not in current_content:
@@ -332,90 +438,32 @@ def check_song_status(content_id):
             })
         
         content = current_content[content_id]
-        song_url = content.get('song_url', '')
+        status = content.get('status', 'unknown')
         
-        if not song_url or not song_url.startswith('Task submitted:'):
-            return jsonify({
-                'success': False,
-                'error': 'No task found for this content'
-            })
-        
-        # Extract task ID from the stored string
-        task_id = song_url.replace('Task submitted: ', '')
-        if task_id == 'None':
-            return jsonify({
-                'success': False,
-                'error': 'Invalid task ID'
-            })
-        
-        # Check status with Suno API
-        status_url = f"https://api.sunoapi.org/api/v1/query?taskId={task_id}"
-        headers = {
-            "Authorization": f"Bearer {SUNO_API_KEY}",
-            "Accept": "application/json"
+        response_data = {
+            'success': True,
+            'status': status,
+            'content_id': content_id
         }
         
-        response = requests.get(status_url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            result = response.json()
-            
-            if result.get('code') == 200:
-                data = result.get('data')
-                if data and isinstance(data, list) and len(data) > 0:
-                    song_data = data[0]  # Get first song
-                    status = song_data.get('status')
-                    
-                    if status == 'complete':
-                        # Song is ready! Get the download URL
-                        audio_url = song_data.get('audioUrl')
-                        video_url = song_data.get('videoUrl') 
-                        
-                        if audio_url:
-                            # Update the content with the actual download URL
-                            current_content[content_id]['song_url'] = audio_url
-                            current_content[content_id]['video_url'] = video_url
-                            current_content[content_id]['status'] = 'complete'
-                            save_generated_content(current_content)
-                            
-                            return jsonify({
-                                'success': True,
-                                'status': 'complete',
-                                'audio_url': audio_url,
-                                'video_url': video_url,
-                                'message': 'Song is ready for download!'
-                            })
-                    
-                    elif status in ['queued', 'running']:
-                        return jsonify({
-                            'success': True,
-                            'status': status,
-                            'message': f'Song is still {status}. Please check again in a moment.'
-                        })
-                    
-                    else:
-                        return jsonify({
-                            'success': False,
-                            'status': status,
-                            'error': f'Song generation failed with status: {status}'
-                        })
-                
-                return jsonify({
-                    'success': False,
-                    'error': 'No data in status response'
-                })
-            
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': f'API error: {result.get("msg", "Unknown error")}'
-                })
-        
-        else:
-            return jsonify({
-                'success': False,
-                'error': f'Status check failed: {response.status_code}'
+        if status == 'completed':
+            response_data.update({
+                'audio_url': content.get('audio_url'),
+                'image_url': content.get('image_url'),
+                'title': content.get('title'),
+                'duration': content.get('duration'),
+                'download_url': f'/download_song/{content_id}',
+                'message': 'Song is ready for download!'
             })
+        elif status == 'failed':
+            response_data.update({
+                'error_message': content.get('error_message', 'Unknown error'),
+                'message': 'Song generation failed'
+            })
+        elif status in ['generating', 'submitted']:
+            response_data['message'] = 'Song is still being generated. Please wait...'
+        
+        return jsonify(response_data)
             
     except Exception as e:
         return jsonify({
